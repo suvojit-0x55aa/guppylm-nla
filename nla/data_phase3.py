@@ -84,6 +84,13 @@ def _build_ar_prompt_ids(tokenizer, summary: str) -> list[int]:
     return tokenizer(text, add_special_tokens=False)["input_ids"]
 
 
+def _normalize_variant_key(variant: str) -> str:
+    """Accept short ('text', 'lens') or full ('summary_text', 'summary_lens')."""
+    if variant in ("text", "lens"):
+        return f"summary_{variant}"
+    return variant
+
+
 class AVDataset(Dataset):
     def __init__(
         self,
@@ -99,7 +106,7 @@ class AVDataset(Dataset):
         self.summaries = summaries
         self.h = h
         self.tok = tokenizer
-        self.variant = variant
+        self.variant = _normalize_variant_key(variant)
         self.max_target_tokens = max_target_tokens
         self.prompt_ids = _build_av_prompt_ids(tokenizer)               # constant per row
         self.eos_id = tokenizer.eos_token_id
@@ -151,7 +158,7 @@ class ARDataset(Dataset):
         self.summaries = summaries
         self.h = h
         self.tok = tokenizer
-        self.variant = variant
+        self.variant = _normalize_variant_key(variant)
         self.max_prompt_tokens = max_prompt_tokens
 
     def __len__(self) -> int:

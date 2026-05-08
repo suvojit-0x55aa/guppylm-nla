@@ -164,6 +164,29 @@ def test_split_determinism():
         assert set(a_train).isdisjoint(set(a_eval))
 
 
+def test_dataset_variant_short_and_long_keys(base_and_tok):
+    """Regression: the CLI passes 'text'/'lens' but JSONL has 'summary_text'/'summary_lens'.
+    Both forms must work."""
+    from nla.data_phase3 import AVDataset, ARDataset
+    _, tok, _ = base_and_tok
+    summaries = [
+        {"row": 0, "summary_text": "alpha summary.", "summary_lens": "alpha lens."},
+        {"row": 1, "summary_text": "beta summary.",  "summary_lens": "beta lens."},
+    ]
+    h = np.zeros((2, 384), dtype=np.float32)
+    for short, full, expected_in_target in [("text", "summary_text", "alpha summary"),
+                                            ("lens", "summary_lens", "alpha lens")]:
+        for variant in (short, full):
+            ds_av = AVDataset([0, 1], summaries, h, tok, variant=variant)
+            item = ds_av[0]
+            decoded = tok.decode(item["input_ids"].tolist())
+            assert expected_in_target in decoded, f"variant={variant}: missing target in {decoded[:200]!r}"
+            ds_ar = ARDataset([0, 1], summaries, h, tok, variant=variant)
+            ar_item = ds_ar[0]
+            ar_decoded = tok.decode(ar_item["input_ids"].tolist())
+            assert expected_in_target in ar_decoded
+
+
 def test_split_seed_changes_partition():
     from nla.splits import make_or_load_split
     with tempfile.TemporaryDirectory() as d:
