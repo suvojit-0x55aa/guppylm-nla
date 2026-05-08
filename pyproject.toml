@@ -1,0 +1,23 @@
+[project]
+name = "guppylm-nla"
+version = "0.1.0"
+description = "Phase 1 of NLA-on-GuppyLM POC: activation extraction"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "torch>=2.2",
+    "tokenizers>=0.19",
+    "numpy>=1.24",
+    "tqdm>=4.65",
+    "huggingface_hub>=0.20",
+    "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

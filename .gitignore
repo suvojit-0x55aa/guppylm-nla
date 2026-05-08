@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Phase 1 artifacts (large + reproducible — keep MANIFEST tracked for provenance)
+checkpoints/
+data/*.jsonl
+data/*.npz
+data/tokenizer.json
+
+!data/.gitkeep
+!data/MANIFEST.json
+!notes/
+
+.DS_Store
+.omc/
+data/MANIFEST_smoke.json
+data/corpus_smoke.jsonl
+data/activations_smoke.npz
