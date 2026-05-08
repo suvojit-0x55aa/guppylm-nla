@@ -17,5 +17,7 @@ data/tokenizer.json
 .DS_Store
 .omc/
 data/MANIFEST_smoke.json
+data/MANIFEST_phase2_smoke.json
 data/corpus_smoke.jsonl
 data/activations_smoke.npz
+data/summaries_smoke.jsonl

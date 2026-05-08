@@ -1,0 +1,36 @@
+{
+  "phase": 2,
+  "model": "gpt-4o-mini",
+  "system_prompt_persona_neutral": true,
+  "temperature": 0.0,
+  "max_tokens": 120,
+  "seed": 42,
+  "concurrency": 16,
+  "retry_strict": false,
+  "include_lens": true,
+  "n_total_rows": 5000,
+  "n_completed_this_run": 5000,
+  "n_errors": 0,
+  "elapsed_sec": 853.11,
+  "tokens_in": 1838874,
+  "tokens_out": 415693,
+  "estimated_cost_usd": 0.5252,
+  "summary_text_word_quantiles": {
+    "p10": 30,
+    "p50": 36,
+    "p90": 43
+  },
+  "summary_lens_word_quantiles": {
+    "p10": 30,
+    "p50": 38,
+    "p90": 44
+  },
+  "refusals_in_success": {
+    "text": 0,
+    "lens": 0
+  },
+  "phase1_hf_revision": "5f09d63fae6f5049bd2360d690f01b68a63d837b",
+  "phase1_seed": 42,
+  "phase1_n_kept": 5000,
+  "timestamp": "2026-05-08T22:08:39Z"
+}
