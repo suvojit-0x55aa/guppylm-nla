@@ -48,14 +48,17 @@ def run_variant(args, variant: str) -> dict:
     """Run AV + AR training for one variant. Returns result dict (logged to manifest)."""
     print(f"\n{'='*70}\n[variant={variant}] starting\n{'='*70}")
 
-    # Load data.
+    # Load data. --raw-h drops the L2-normalization (substrate probe showed
+    # ~15% category-classification signal is destroyed by L2-norm; AV needs
+    # the magnitude info to write content-correlated text).
+    layer_key = args.layer if args.raw_h else args.layer + "_l2"
     corpus, summaries, h_all = load_phase3_inputs(
         corpus_path=args.corpus,
         summaries_path=args.summaries,
         activations_path=args.activations,
-        layer_key=args.layer + "_l2",  # h3 → h3_l2
+        layer_key=layer_key,
     )
-    print(f"loaded {len(corpus)} rows; h shape {h_all.shape}; layer {args.layer}_l2")
+    print(f"loaded {len(corpus)} rows; h shape {h_all.shape}; layer {layer_key}")
 
     # Cap n if requested (for smoke).
     if args.n is not None and args.n < len(corpus):
@@ -268,7 +271,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Phase 3: SFT warm-start AV + AR")
     p.add_argument("--variant", choices=["text", "lens", "both"], default="both",
                    help="text → summary_text; lens → summary_lens; both → run sequentially")
-    p.add_argument("--layer", default="h3", help="activation layer key prefix (e.g. h3 → reads h3_l2)")
+    p.add_argument("--layer", default="h3", help="activation layer key prefix (e.g. h3 → reads h3_l2 by default, or h3 with --raw-h)")
+    p.add_argument("--raw-h", action="store_true", help="use raw (non-L2-normed) activations; preserves magnitude info that L2 destroys")
     p.add_argument("--n", type=int, default=None, help="cap on rows for smoke runs")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--eval-size", type=int, default=500)
