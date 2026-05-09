@@ -129,6 +129,10 @@ class AVDataset(Dataset):
 
 
 def av_collate(batch: list[dict], pad_token_id: int) -> dict:
+    """Left-pad: required by Qwen2 flash-attention-2 (it rejects right-pad).
+    Pads go at the start; real tokens (prompt + target + eos) at the end.
+    Labels are -100 on pad slots and on prompt slots; CE loss only sees the
+    target tokens, regardless of padding side."""
     max_len = max(b["input_ids"].shape[0] for b in batch)
     B = len(batch)
     input_ids = torch.full((B, max_len), pad_token_id, dtype=torch.long)
@@ -137,9 +141,9 @@ def av_collate(batch: list[dict], pad_token_id: int) -> dict:
     h = torch.stack([b["h"] for b in batch])                            # (B, 384)
     for i, b in enumerate(batch):
         n = b["input_ids"].shape[0]
-        input_ids[i, :n] = b["input_ids"]
-        labels[i, :n] = b["labels"]
-        attn[i, :n] = 1
+        input_ids[i, max_len - n:] = b["input_ids"]
+        labels[i, max_len - n:] = b["labels"]
+        attn[i, max_len - n:] = 1
     return {"input_ids": input_ids, "attention_mask": attn, "labels": labels, "h": h}
 
 
@@ -175,6 +179,8 @@ class ARDataset(Dataset):
 
 
 def ar_collate(batch: list[dict], pad_token_id: int) -> dict:
+    """Left-pad: required by Qwen2 flash-attention-2. Real tokens at the end;
+    AR's last-token gather can simply use the final index."""
     max_len = max(b["input_ids"].shape[0] for b in batch)
     B = len(batch)
     input_ids = torch.full((B, max_len), pad_token_id, dtype=torch.long)
@@ -182,6 +188,6 @@ def ar_collate(batch: list[dict], pad_token_id: int) -> dict:
     h = torch.stack([b["h"] for b in batch])
     for i, b in enumerate(batch):
         n = b["input_ids"].shape[0]
-        input_ids[i, :n] = b["input_ids"]
-        attn[i, :n] = 1
+        input_ids[i, max_len - n:] = b["input_ids"]
+        attn[i, max_len - n:] = 1
     return {"input_ids": input_ids, "attention_mask": attn, "h": h}

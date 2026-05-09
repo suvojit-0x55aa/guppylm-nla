@@ -68,13 +68,10 @@ class AR(nn.Module):
             output_hidden_states=True, return_dict=True,
         )
         last_hidden = out.hidden_states[-1]                             # (B, T, d_hidden)
-        if attention_mask is not None:
-            # Take the last *non-padded* token per row.
-            seq_lens = attention_mask.sum(dim=1) - 1                    # (B,)
-            idx = seq_lens.view(-1, 1, 1).expand(-1, 1, last_hidden.shape[-1])
-            last_token = last_hidden.gather(dim=1, index=idx).squeeze(1)
-        else:
-            last_token = last_hidden[:, -1, :]
+        # Left-padded inputs (required by Qwen2 flash-attention-2): real tokens
+        # are at the end, so the final index is the last non-pad token in every
+        # row regardless of original length.
+        last_token = last_hidden[:, -1, :]
         # Cast to head's dtype: head is fp32 (AdamW state stability) but
         # base's last_hidden may be bf16/fp16. Without autocast (eval path),
         # F.linear errors on dtype mismatch — explicit cast handles both paths.

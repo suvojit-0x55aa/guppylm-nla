@@ -154,14 +154,16 @@ def test_ar_zero_init(base_and_tok):
 
 
 def test_ar_uses_last_non_pad_token(base_and_tok):
-    """AR should use the last *non-padded* token's hidden state, not the literal last position."""
+    """AR uses the final position; collates left-pad so the final position is
+    always the last non-pad token (FA2 requires left-pad)."""
     from nla.ar import AR
     base, tok, act_id = base_and_tok
     ar = AR(base, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="ar_pad_test")
     B, T = 2, 10
     input_ids = torch.full((B, T), tok.pad_token_id, dtype=torch.long)
-    input_ids[0, :4] = torch.tensor([10, 20, 30, 40])
-    input_ids[1, :7] = torch.tensor([10, 20, 30, 40, 50, 60, 70])
+    # Left-pad: real tokens at the end of each row.
+    input_ids[0, T - 4:] = torch.tensor([10, 20, 30, 40])
+    input_ids[1, T - 7:] = torch.tensor([10, 20, 30, 40, 50, 60, 70])
     attn = (input_ids != tok.pad_token_id).long()
     out = ar(input_ids=input_ids, attention_mask=attn)
     assert out.shape == (B, 384)

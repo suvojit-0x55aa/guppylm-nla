@@ -125,6 +125,9 @@ def load_qwen(
     tok = AutoTokenizer.from_pretrained(model_id)
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
+    # FA2 on Qwen2 requires left-padding when the batch contains pads. Our
+    # collates already left-pad, but this aligns any direct tokenizer.pad calls.
+    tok.padding_side = "left"
 
     added = tok.add_special_tokens({"additional_special_tokens": [ACT_TOKEN]})
 

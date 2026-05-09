@@ -30,7 +30,7 @@ run_variant() {
         --max-steps "$MAX_STEPS" --min-steps 1000 \
         --time-budget-min "$TIME_BUDGET_MIN" \
         --batch 0 --eval-batch 0 \
-        --eval-every 200 --ckpt-every 500 \
+        --eval-every 250 --ckpt-every 250 \
         --fve-eval-size 64 --final-fve-eval-size 200 \
         --skip-if-trained \
         --ckpt-root "$CKPT_ROOT" \
