@@ -298,7 +298,7 @@ def train_av(
             progress.update(1)
             train_loss_full = float(loss.item()) * grad_accum
             loss_ema = train_loss_full if loss_ema is None else 0.98 * loss_ema + 0.02 * train_loss_full
-            gpu_gb = (torch.cuda.memory_allocated() / 1024 ** 3) if device.type == "cuda" else 0.0
+            gpu_gb = (torch.cuda.memory_reserved() / 1024 ** 3) if device.type == "cuda" else 0.0
             progress.set_postfix(
                 loss=f"{loss_ema:.3f}", gn=f"{last_gn:.2f}", lr=f"{last_lr:.1e}",
                 eval=f"{last_eval_ce:.3f}", gpu=f"{gpu_gb:.1f}G",
@@ -428,7 +428,7 @@ def train_ar(
             progress.update(1)
             train_mse_full = float(loss.item()) * grad_accum
             loss_ema = train_mse_full if loss_ema is None else 0.98 * loss_ema + 0.02 * train_mse_full
-            gpu_gb = (torch.cuda.memory_allocated() / 1024 ** 3) if device.type == "cuda" else 0.0
+            gpu_gb = (torch.cuda.memory_reserved() / 1024 ** 3) if device.type == "cuda" else 0.0
             progress.set_postfix(
                 mse=f"{loss_ema:.3f}", gn=f"{last_gn:.2f}", lr=f"{last_lr:.1e}",
                 emse=f"{last_eval_mse:.3f}", fve=f"{last_fve:.3f}", gpu=f"{gpu_gb:.1f}G",
