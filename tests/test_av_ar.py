@@ -220,6 +220,43 @@ def test_dataset_variant_short_and_long_keys(base_and_tok):
             assert expected_in_target in ar_decoded
 
 
+def test_checkpoint_roundtrip_preserves_proj_and_head(base_and_tok):
+    """Regression: save_final/load_final must persist P_AV (proj) and Q_AR (head)
+    weights, not just LoRA. Earlier filter used '.proj.' and '.head.' literal
+    substrings — those don't match top-level keys 'proj.weight' / 'head.weight',
+    so the projection/head silently dropped during save."""
+    from nla.av import AV
+    from nla.ar import AR
+    from nla.train_warmstart import save_final, load_final, _trainable_state
+    base, tok, act_id = base_and_tok
+    av = AV(base, act_id, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="av_ckpt")
+    # Mutate proj weights so default-init doesn't accidentally hide a bug
+    with torch.no_grad():
+        av.proj.weight.copy_(torch.randn_like(av.proj.weight) * 0.5)
+        av.proj.bias.copy_(torch.full_like(av.proj.bias, 0.123))
+    state = _trainable_state(av)
+    proj_keys = [k for k in state if 'proj' in k]
+    assert proj_keys, f"proj.* missing from saved state. keys: {list(state)[:5]}"
+
+    ar = AR(av.base, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="ar_ckpt")
+    with torch.no_grad():
+        ar.head.weight.copy_(torch.randn_like(ar.head.weight) * 0.5)
+        ar.head.bias.copy_(torch.full_like(ar.head.bias, 0.456))
+    state_ar = _trainable_state(ar)
+    head_keys = [k for k in state_ar if 'head' in k]
+    assert head_keys, f"head.* missing from saved state. keys: {list(state_ar)[:5]}"
+
+    # Round-trip via save_final/load_final
+    with tempfile.TemporaryDirectory() as d:
+        save_final(av, Path(d), step=10)
+        # Build a fresh AV with default init (proj should differ)
+        av2 = AV(base, act_id, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="av_ckpt2")
+        info = load_final(av2, Path(d), device="cpu")
+        assert info is not None
+        assert torch.allclose(av2.proj.weight.float(), av.proj.weight.float(), atol=1e-4)
+        assert torch.allclose(av2.proj.bias.float(), av.proj.bias.float(), atol=1e-4)
+
+
 def test_split_seed_changes_partition():
     from nla.splits import make_or_load_split
     with tempfile.TemporaryDirectory() as d:

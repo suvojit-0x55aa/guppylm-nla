@@ -113,18 +113,24 @@ def _set_lrs(opt: torch.optim.Optimizer, *, max_steps: int, step: int,
     return lora_lr, proj_lr
 
 
-def _trainable_keys(state_dict: dict) -> dict:
-    """Subset of state_dict that we actually train (LoRA adapters + proj/head)."""
-    return {
-        k: v.detach().cpu()
-        for k, v in state_dict.items()
-        if any(t in k for t in ("lora_", ".proj.", ".head."))
-    }
+def _trainable_state(module: nn.Module) -> dict:
+    """Subset of state_dict containing only trainable parameters
+    (LoRA adapters + proj/head). Uses requires_grad rather than name-matching
+    so we don't silently drop the projection/head when their key paths differ
+    from a hardcoded expectation."""
+    trainable_names = {n for n, p in module.named_parameters() if p.requires_grad}
+    out: dict = {}
+    for k, v in module.state_dict().items():
+        # state_dict keys can include a "module." prefix or other wrappers; map
+        # back by suffix-match against named_parameters() names.
+        if k in trainable_names or any(k.endswith(name) for name in trainable_names):
+            out[k] = v.detach().cpu()
+    return out
 
 
 def _save_checkpoint(module: nn.Module, save_dir: Path, step: int, tag: str = "ar_or_av"):
     save_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({"step": step, "trainable_state": _trainable_keys(module.state_dict())},
+    torch.save({"step": step, "trainable_state": _trainable_state(module)},
                save_dir / f"step_{step}.pt")
 
 
@@ -133,11 +139,13 @@ def save_final(module: nn.Module, save_dir: Path, step: int, *, history: dict | 
     """Persist a 'final.pt' that resume-on-second-run looks for."""
     save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
     final_path = save_dir / "final.pt"
+    state = _trainable_state(module)
     torch.save({
         "step": step,
         "stop_reason": stop_reason,
         "history": history,
-        "trainable_state": _trainable_keys(module.state_dict()),
+        "trainable_state": state,
+        "n_keys": len(state),
     }, final_path)
     return final_path
 
