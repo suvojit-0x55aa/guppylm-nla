@@ -130,10 +130,21 @@ def _trainable_state(module: nn.Module) -> dict:
     return out
 
 
-def _save_checkpoint(module: nn.Module, save_dir: Path, step: int, tag: str = "ar_or_av"):
+def _save_checkpoint(module: nn.Module, save_dir: Path, step: int, tag: str = "ar_or_av",
+                     keep_last: int = 3):
+    """Save step_<n>.pt; rotate to keep only the last `keep_last` step files.
+    final.pt is never rotated. With each ckpt at ~1.3 GB on the resized-embedding
+    base, keeping all of a 6000-step run would need ~33 GB; we cap at ~4 GB."""
     save_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"step": step, "trainable_state": _trainable_state(module)},
                save_dir / f"step_{step}.pt")
+    step_files = sorted(save_dir.glob("step_*.pt"),
+                        key=lambda p: int(p.stem.split("_")[1]))
+    for old in step_files[:-keep_last]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def save_final(module: nn.Module, save_dir: Path, step: int, *, history: dict | None = None,
