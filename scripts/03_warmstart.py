@@ -23,14 +23,14 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nla.qwen import load_qwen, DEFAULT_MODEL_ID  # noqa: E402
+from nla.qwen import auto_batch_sizes, load_qwen, DEFAULT_MODEL_ID  # noqa: E402
 from nla.av import AV  # noqa: E402
 from nla.ar import AR  # noqa: E402
 from nla.data_phase3 import (  # noqa: E402
     AVDataset, ARDataset, av_collate, ar_collate, load_phase3_inputs,
 )
 from nla.splits import make_or_load_split  # noqa: E402
-from nla.train_warmstart import train_av, train_ar  # noqa: E402
+from nla.train_warmstart import load_final, save_final, train_av, train_ar  # noqa: E402
 from nla.fve import joint_fve, variance_of_targets  # noqa: E402
 
 
@@ -86,6 +86,19 @@ def run_variant(args, variant: str) -> dict:
     print(f"AV trainable params: {av.trainable_parameter_count():,}")
     print(f"AR trainable params: {ar.trainable_parameter_count():,}")
 
+    # Pick batch sizes based on currently free GPU memory (after model loaded).
+    if args.batch == 0 or args.eval_batch == 0:
+        auto_train, auto_eval, info = auto_batch_sizes()
+        if args.batch == 0:
+            args.batch = auto_train
+        if args.eval_batch == 0:
+            args.eval_batch = auto_eval
+        print(f"auto batch sizing: device={info.get('device')} "
+              f"free={info.get('free_gb')} GB / total={info.get('total_gb')} GB → "
+              f"train_batch={args.batch}, eval_batch={args.eval_batch}")
+    else:
+        print(f"explicit batch sizes: train={args.batch}, eval={args.eval_batch}")
+
     # Datasets + loaders.
     av_train_ds = AVDataset(train_idx, summaries, h_all, tok, variant=variant)
     av_eval_ds = AVDataset(eval_idx, summaries, h_all, tok, variant=variant)
@@ -125,20 +138,30 @@ def run_variant(args, variant: str) -> dict:
     total_budget_sec = args.time_budget_min * 60.0
     av_budget_sec = total_budget_sec * 0.5
 
-    # Train AV.
+    # Train AV (skip if a final.pt already exists in --ckpt-root).
     t0 = time.time()
-    print(f"\n[variant={variant}] training AV (budget {av_budget_sec/60:.0f} min)")
     av_save = Path(args.ckpt_root) / f"av_{variant}"
-    av_result = train_av(
-        av, av_train_loader, av_eval_loader,
-        max_steps=args.max_steps, min_steps=args.min_steps,
-        eval_every=args.eval_every, ckpt_every=args.ckpt_every,
-        grad_accum=args.grad_accum, grad_clip=1.0,
-        lr_lora=args.lr_lora, lr_proj=args.lr_proj, weight_decay=0.01,
-        warmup_steps=200, patience=args.patience, min_delta=args.min_delta,
-        time_budget_sec=av_budget_sec,
-        save_dir=av_save, device=device, log_every=50,
-    )
+    loaded = load_final(av, av_save, device=device) if args.skip_if_trained else None
+    if loaded is not None:
+        print(f"\n[variant={variant}] AV already trained → loaded {av_save}/final.pt "
+              f"(step={loaded['step']}, stop_reason={loaded['stop_reason']}, "
+              f"keys={loaded['n_loaded_keys']})")
+        av_result = {"stop_reason": "loaded_from_disk",
+                     "final_step": int(loaded.get("step") or 0),
+                     "elapsed_sec": 0.0,
+                     "history": loaded.get("history") or []}
+    else:
+        print(f"\n[variant={variant}] training AV (budget {av_budget_sec/60:.0f} min)")
+        av_result = train_av(
+            av, av_train_loader, av_eval_loader,
+            max_steps=args.max_steps, min_steps=args.min_steps,
+            eval_every=args.eval_every, ckpt_every=args.ckpt_every,
+            grad_accum=args.grad_accum, grad_clip=1.0,
+            lr_lora=args.lr_lora, lr_proj=args.lr_proj, weight_decay=0.01,
+            warmup_steps=200, patience=args.patience, min_delta=args.min_delta,
+            time_budget_sec=av_budget_sec,
+            save_dir=av_save, device=device, log_every=50,
+        )
     av_elapsed = time.time() - t0
     print(f"AV: stop_reason={av_result['stop_reason']}, steps={av_result['final_step']}, "
           f"elapsed={av_elapsed/60:.1f}min")
@@ -160,21 +183,31 @@ def run_variant(args, variant: str) -> dict:
         av.train()
         return result["fve"]
 
-    # Train AR.
-    print(f"\n[variant={variant}] training AR (budget {ar_budget_sec/60:.0f} min)")
+    # Train AR (skip if a final.pt already exists).
     t1 = time.time()
     ar_save = Path(args.ckpt_root) / f"ar_{variant}"
-    ar_result = train_ar(
-        ar, ar_train_loader, ar_eval_loader,
-        fve_eval_fn=fve_at_step,
-        max_steps=args.max_steps, min_steps=args.min_steps,
-        eval_every=args.eval_every, ckpt_every=args.ckpt_every,
-        grad_accum=args.grad_accum, grad_clip=1.0,
-        lr_lora=args.lr_lora, lr_proj=args.lr_proj, weight_decay=0.01,
-        warmup_steps=200, patience=args.patience, min_delta=args.min_delta,
-        time_budget_sec=ar_budget_sec,
-        save_dir=ar_save, device=device, log_every=50,
-    )
+    loaded_ar = load_final(ar, ar_save, device=device) if args.skip_if_trained else None
+    if loaded_ar is not None:
+        print(f"\n[variant={variant}] AR already trained → loaded {ar_save}/final.pt "
+              f"(step={loaded_ar['step']}, stop_reason={loaded_ar['stop_reason']}, "
+              f"keys={loaded_ar['n_loaded_keys']})")
+        ar_result = {"stop_reason": "loaded_from_disk",
+                     "final_step": int(loaded_ar.get("step") or 0),
+                     "elapsed_sec": 0.0,
+                     "history": loaded_ar.get("history") or []}
+    else:
+        print(f"\n[variant={variant}] training AR (budget {ar_budget_sec/60:.0f} min)")
+        ar_result = train_ar(
+            ar, ar_train_loader, ar_eval_loader,
+            fve_eval_fn=fve_at_step,
+            max_steps=args.max_steps, min_steps=args.min_steps,
+            eval_every=args.eval_every, ckpt_every=args.ckpt_every,
+            grad_accum=args.grad_accum, grad_clip=1.0,
+            lr_lora=args.lr_lora, lr_proj=args.lr_proj, weight_decay=0.01,
+            warmup_steps=200, patience=args.patience, min_delta=args.min_delta,
+            time_budget_sec=ar_budget_sec,
+            save_dir=ar_save, device=device, log_every=50,
+        )
     ar_elapsed = time.time() - t1
     print(f"AR: stop_reason={ar_result['stop_reason']}, steps={ar_result['final_step']}, "
           f"elapsed={ar_elapsed/60:.1f}min")
@@ -233,9 +266,10 @@ def main() -> int:
     p.add_argument("--min-delta", type=float, default=0.005)
     p.add_argument("--time-budget-min", type=int, default=180,
                    help="hard wall-clock cap per variant (AV+AR combined)")
-    p.add_argument("--batch", type=int, default=4)
-    p.add_argument("--eval-batch", type=int, default=8,
-                   help="batch size for FVE eval (autoregressive Qwen3B decode is the bottleneck)")
+    p.add_argument("--batch", type=int, default=0,
+                   help="train batch (0 = auto from free GPU memory)")
+    p.add_argument("--eval-batch", type=int, default=0,
+                   help="FVE eval batch (0 = auto from free GPU memory)")
     p.add_argument("--grad-accum", type=int, default=4)
     p.add_argument("--eval-every", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=500)
@@ -257,6 +291,8 @@ def main() -> int:
     p.add_argument("--activations", default="data/activations.npz")
     p.add_argument("--splits-path", default="data/splits.json")
     p.add_argument("--ckpt-root", default="checkpoints/phase3")
+    p.add_argument("--skip-if-trained", action=argparse.BooleanOptionalAction, default=True,
+                   help="if --ckpt-root/<av|ar>_<variant>/final.pt exists, load it and skip training")
     p.add_argument("--history-root", default="data")
     p.add_argument("--manifest", default="data/MANIFEST_phase3.json")
     args = p.parse_args()

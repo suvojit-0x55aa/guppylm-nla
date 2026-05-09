@@ -16,6 +16,63 @@ DEFAULT_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 ACT_TOKEN = "<ACT>"
 
 
+def auto_batch_sizes(
+    *,
+    train_floor: int = 1,
+    train_ceiling: int = 16,
+    eval_floor: int = 2,
+    eval_ceiling: int = 32,
+    reserved_gb: float = 3.0,
+    train_per_unit_mb: float = 700.0,
+    eval_per_unit_mb: float = 200.0,
+) -> tuple[int, int, dict]:
+    """Heuristic batch sizes from current free CUDA memory.
+
+    Should be called AFTER load_qwen() so the base model + adapters + KV
+    cache scratch are already on the device.
+
+    Constants are tuned empirically for Qwen 3B-4bit + LoRA r=16 at
+    seq_len ≈ 128:
+      ~700 MB / batch unit during training (fwd+bwd+optimizer state)
+      ~200 MB / batch unit during AV.generate eval (KV cache + activations)
+
+    Returns (train_batch, eval_batch, info) — info has the full budget breakdown.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return train_floor, eval_floor, {
+            "free_gb": 0.0, "total_gb": 0.0, "device": "cpu/mps", "fallback": True,
+        }
+
+    free_b, total_b = torch.cuda.mem_get_info()
+    free_gb = free_b / 1024 ** 3
+    total_gb = total_b / 1024 ** 3
+    available_gb = max(0.0, free_gb - reserved_gb)
+
+    train_b = int(available_gb * 1024 / train_per_unit_mb)
+    eval_b = int(available_gb * 1024 / eval_per_unit_mb)
+
+    # Round to powers of 2 (kernels prefer it) but allow non-power for low values.
+    def _snap(x: int, lo: int, hi: int) -> int:
+        x = max(lo, min(hi, x))
+        if x >= 4:
+            return 1 << (x.bit_length() - 1)        # largest pow2 ≤ x
+        return x
+
+    train_b = _snap(train_b, train_floor, train_ceiling)
+    eval_b = _snap(eval_b, eval_floor, eval_ceiling)
+
+    info = {
+        "free_gb": round(free_gb, 2),
+        "total_gb": round(total_gb, 2),
+        "available_gb_after_reserve": round(available_gb, 2),
+        "reserved_gb": reserved_gb,
+        "device": torch.cuda.get_device_name(0),
+    }
+    return train_b, eval_b, info
+
+
 def load_qwen(
     model_id: str = DEFAULT_MODEL_ID,
     *,

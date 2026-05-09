@@ -113,14 +113,47 @@ def _set_lrs(opt: torch.optim.Optimizer, *, max_steps: int, step: int,
     return lora_lr, proj_lr
 
 
+def _trainable_keys(state_dict: dict) -> dict:
+    """Subset of state_dict that we actually train (LoRA adapters + proj/head)."""
+    return {
+        k: v.detach().cpu()
+        for k, v in state_dict.items()
+        if any(t in k for t in ("lora_", ".proj.", ".head."))
+    }
+
+
 def _save_checkpoint(module: nn.Module, save_dir: Path, step: int, tag: str = "ar_or_av"):
     save_dir.mkdir(parents=True, exist_ok=True)
-    ckpt = {"step": step, "trainable_state": {
-        k: v.detach().cpu()
-        for k, v in module.state_dict().items()
-        if any(t in k for t in ("lora_", ".proj.", ".head."))
-    }}
-    torch.save(ckpt, save_dir / f"step_{step}.pt")
+    torch.save({"step": step, "trainable_state": _trainable_keys(module.state_dict())},
+               save_dir / f"step_{step}.pt")
+
+
+def save_final(module: nn.Module, save_dir: Path, step: int, *, history: dict | None = None,
+                stop_reason: str | None = None) -> Path:
+    """Persist a 'final.pt' that resume-on-second-run looks for."""
+    save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
+    final_path = save_dir / "final.pt"
+    torch.save({
+        "step": step,
+        "stop_reason": stop_reason,
+        "history": history,
+        "trainable_state": _trainable_keys(module.state_dict()),
+    }, final_path)
+    return final_path
+
+
+def load_final(module: nn.Module, save_dir: Path, device: torch.device | str = "cuda") -> dict | None:
+    """If save_dir/final.pt exists, load its trainable_state into module. Returns the
+    loaded checkpoint metadata (without trainable_state) or None."""
+    final_path = Path(save_dir) / "final.pt"
+    if not final_path.exists():
+        return None
+    ckpt = torch.load(final_path, map_location=device, weights_only=False)
+    state = ckpt.get("trainable_state", {})
+    missing, unexpected = module.load_state_dict(state, strict=False)
+    return {"step": ckpt.get("step"), "stop_reason": ckpt.get("stop_reason"),
+            "history": ckpt.get("history", []), "n_loaded_keys": len(state),
+            "n_unexpected": len(unexpected)}
 
 
 # ── AV training ───────────────────────────────────────────────────────────────
@@ -225,7 +258,9 @@ def train_av(
     progress.close()
     _save_checkpoint(av, save_dir, step, tag="av")
     elapsed = time.time() - t0
-    return {"stop_reason": stop_reason, "final_step": step, "elapsed_sec": elapsed, "history": history}
+    result = {"stop_reason": stop_reason, "final_step": step, "elapsed_sec": elapsed, "history": history}
+    save_final(av, save_dir, step, history=history, stop_reason=stop_reason)
+    return result
 
 
 # ── AR training ───────────────────────────────────────────────────────────────
@@ -342,4 +377,6 @@ def train_ar(
     progress.close()
     _save_checkpoint(ar, save_dir, step, tag="ar")
     elapsed = time.time() - t0
-    return {"stop_reason": stop_reason, "final_step": step, "elapsed_sec": elapsed, "history": history}
+    result = {"stop_reason": stop_reason, "final_step": step, "elapsed_sec": elapsed, "history": history}
+    save_final(ar, save_dir, step, history=history, stop_reason=stop_reason)
+    return result
