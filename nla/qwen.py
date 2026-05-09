@@ -81,12 +81,25 @@ def auto_batch_sizes(
     return train_b, eval_b, info
 
 
+def _best_attn_impl() -> str | None:
+    """Prefer flash-attention-2 if importable; falls back to default sdpa.
+    sdpa fires a benign sliding-window warning on Qwen2.5 (seq < window so it's
+    a no-op) but the SDPA fallback path is slower than FA2 for our 130-token
+    seqs. Returns None to let HF pick the default."""
+    try:
+        import flash_attn  # noqa: F401
+        return "flash_attention_2"
+    except ImportError:
+        return None
+
+
 def load_qwen(
     model_id: str = DEFAULT_MODEL_ID,
     *,
     use_4bit: bool = True,
     device_map: str | dict | None = "auto",
     dtype: torch.dtype | None = None,
+    attn_implementation: str | None = None,
 ):
     """Load (base, tokenizer, act_token_id).
 
@@ -120,6 +133,10 @@ def load_qwen(
         base_kwargs["quantization_config"] = quantization_config
     else:
         base_kwargs["dtype"] = dtype
+    impl = attn_implementation or _best_attn_impl()
+    if impl is not None:
+        base_kwargs["attn_implementation"] = impl
+        print(f"  attn_implementation: {impl}")
 
     base = AutoModelForCausalLM.from_pretrained(model_id, **base_kwargs)
 
