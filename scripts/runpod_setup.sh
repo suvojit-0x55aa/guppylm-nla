@@ -43,7 +43,10 @@ if [[ ! -f data/corpus.jsonl ]]; then
     echo "==> extracting bundle"
     STAGE="$WORKSPACE/_bundle_stage"
     rm -rf "$STAGE" && mkdir -p "$STAGE"
-    tar xzf "$BUNDLE" -C "$STAGE"
+    # --no-same-owner: bundle was tarred on macOS with uid 501; pod runs as
+    #   root and would error trying to chown to a non-existent uid.
+    # --exclude='._*': drop AppleDouble resource forks the macOS tar embedded.
+    tar xzf "$BUNDLE" -C "$STAGE" --no-same-owner --exclude='._*'
     for sub in data checkpoints; do
         if [[ -d "$STAGE/$sub" ]]; then
             rm -rf "$REPO_DIR/$sub"
@@ -63,4 +66,4 @@ echo "==> pytest"
 HF_HOME="$HF_HOME_DIR" python -m pytest tests/test_av_ar.py -q
 
 echo
-echo "==> setup OK. next: bash runpod/smoke.sh"
+echo "==> setup OK. next: bash scripts/runpod_smoke.sh"
