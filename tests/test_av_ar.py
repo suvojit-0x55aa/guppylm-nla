@@ -135,6 +135,22 @@ def test_ar_forward_shape(base_and_tok):
     assert out.dtype == torch.float32     # AR returns fp32 for stable MSE
 
 
+def test_ar_zero_init(base_and_tok):
+    """Regression: AR.head must be zero-initialized so initial ĥ ≈ 0 and MSE
+    against unit-norm targets stays at ~1 (not ~440). Otherwise smoke FVE
+    starts at -300+ and training has to dig out of a deep hole."""
+    from nla.ar import AR
+    base, tok, _ = base_and_tok
+    ar = AR(base, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="ar_init")
+    assert ar.head.weight.abs().max().item() == 0.0
+    assert ar.head.bias.abs().max().item() == 0.0
+    B, T = 4, 12
+    input_ids = torch.randint(0, base.config.vocab_size, (B, T), dtype=torch.long)
+    attn = torch.ones((B, T), dtype=torch.long)
+    out = ar(input_ids=input_ids, attention_mask=attn)
+    assert out.abs().max().item() < 1e-5, f"zero-init violated: max abs = {out.abs().max().item()}"
+
+
 def test_ar_uses_last_non_pad_token(base_and_tok):
     """AR should use the last *non-padded* token's hidden state, not the literal last position."""
     from nla.ar import AR

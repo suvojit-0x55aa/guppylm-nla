@@ -46,7 +46,11 @@ class AR(nn.Module):
         d_hidden = self.base.config.hidden_size
         head_dtype = next(self.base.parameters()).dtype
         self.head = nn.Linear(d_hidden, d_substrate, dtype=head_dtype)
-        nn.init.normal_(self.head.weight, mean=0.0, std=0.02)
+        # Zero-init: target h_l2 is unit-norm; std=0.02 init produces ĥ with
+        # norm ≈ √d_substrate · 0.02 · ||hidden|| ≈ 21, blowing MSE to ~440 per
+        # row before any learning. Zero init makes initial FVE ≈ 0 so training
+        # starts from a sensible baseline.
+        nn.init.zeros_(self.head.weight)
         nn.init.zeros_(self.head.bias)
         self.d_substrate = d_substrate
 
