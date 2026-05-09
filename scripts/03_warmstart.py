@@ -94,12 +94,28 @@ def run_variant(args, variant: str) -> dict:
     pad = tok.pad_token_id
     av_train_loader = DataLoader(av_train_ds, batch_size=args.batch, shuffle=True,
                                   collate_fn=partial(av_collate, pad_token_id=pad))
-    av_eval_loader = DataLoader(av_eval_ds, batch_size=args.batch, shuffle=False,
+    av_eval_loader = DataLoader(av_eval_ds, batch_size=args.eval_batch, shuffle=False,
                                  collate_fn=partial(av_collate, pad_token_id=pad))
     ar_train_loader = DataLoader(ar_train_ds, batch_size=args.batch, shuffle=True,
                                   collate_fn=partial(ar_collate, pad_token_id=pad))
-    ar_eval_loader = DataLoader(ar_eval_ds, batch_size=args.batch, shuffle=False,
+    ar_eval_loader = DataLoader(ar_eval_ds, batch_size=args.eval_batch, shuffle=False,
                                  collate_fn=partial(ar_collate, pad_token_id=pad))
+
+    # FVE eval is autoregressive Qwen 3B decode → expensive. Use a small subset
+    # for the in-training callback; full subset for the final headline number.
+    fve_train_idx = eval_idx[: args.fve_eval_size]
+    fve_final_idx = eval_idx[: args.final_fve_eval_size]
+    av_fve_train_loader = DataLoader(
+        AVDataset(fve_train_idx, summaries, h_all, tok, variant=variant),
+        batch_size=args.eval_batch, shuffle=False,
+        collate_fn=partial(av_collate, pad_token_id=pad),
+    )
+    av_fve_final_loader = DataLoader(
+        AVDataset(fve_final_idx, summaries, h_all, tok, variant=variant),
+        batch_size=args.eval_batch, shuffle=False,
+        collate_fn=partial(av_collate, pad_token_id=pad),
+    )
+    print(f"FVE eval rows: callback={len(fve_train_idx)}, final={len(fve_final_idx)}")
 
     # FVE denominator on the held-out h.
     h_var = variance_of_targets(h_all[eval_idx])
@@ -129,12 +145,13 @@ def run_variant(args, variant: str) -> dict:
 
     ar_budget_sec = max(60.0, total_budget_sec - av_elapsed)
 
-    # Build the FVE-callback for AR's early-stop signal.
+    # Build the FVE-callback for AR's early-stop signal — uses a small subset
+    # (default 64 rows) so a single eval doesn't burn an hour of decode time.
     @torch.no_grad()
     def fve_at_step(step: int) -> float:
         av.eval()
         result = joint_fve(
-            av, ar, av_eval_loader,
+            av, ar, av_fve_train_loader,
             h_var=h_var, tokenizer=tok,
             pad_token_id=pad, eos_token_id=tok.eos_token_id,
             device=device, max_new_tokens=args.max_new_tokens,
@@ -162,11 +179,12 @@ def run_variant(args, variant: str) -> dict:
     print(f"AR: stop_reason={ar_result['stop_reason']}, steps={ar_result['final_step']}, "
           f"elapsed={ar_elapsed/60:.1f}min")
 
-    # Final FVE eval with sample dump for the report.
-    print(f"\n[variant={variant}] final joint FVE eval")
+    # Final FVE eval with sample dump for the report. Larger subset than the
+    # callback so the headline number has reasonable variance.
+    print(f"\n[variant={variant}] final joint FVE eval (n={len(fve_final_idx)})")
     av.eval(); ar.eval()
     final = joint_fve(
-        av, ar, av_eval_loader,
+        av, ar, av_fve_final_loader,
         h_var=h_var, tokenizer=tok,
         pad_token_id=pad, eos_token_id=tok.eos_token_id,
         device=device, max_new_tokens=args.max_new_tokens,
@@ -216,6 +234,8 @@ def main() -> int:
     p.add_argument("--time-budget-min", type=int, default=180,
                    help="hard wall-clock cap per variant (AV+AR combined)")
     p.add_argument("--batch", type=int, default=4)
+    p.add_argument("--eval-batch", type=int, default=8,
+                   help="batch size for FVE eval (autoregressive Qwen3B decode is the bottleneck)")
     p.add_argument("--grad-accum", type=int, default=4)
     p.add_argument("--eval-every", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=500)
@@ -223,7 +243,12 @@ def main() -> int:
     p.add_argument("--lr-proj", type=float, default=1e-3)
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=int, default=32)
-    p.add_argument("--max-new-tokens", type=int, default=80)
+    p.add_argument("--max-new-tokens", type=int, default=60,
+                   help="AV greedy max-new-tokens during FVE. Summaries average 50-65 toks.")
+    p.add_argument("--fve-eval-size", type=int, default=64,
+                   help="rows for the in-training FVE callback (called every --eval-every steps)")
+    p.add_argument("--final-fve-eval-size", type=int, default=200,
+                   help="rows for the final post-training FVE; the headline number")
     p.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     p.add_argument("--no-bnb", action="store_true", help="skip bitsandbytes 4-bit (fp16 fallback)")
     p.add_argument("--model-id", default=DEFAULT_MODEL_ID)
