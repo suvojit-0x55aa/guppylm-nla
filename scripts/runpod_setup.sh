@@ -18,14 +18,21 @@ echo
 echo "==> nvidia-smi"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader
 
-# 2. Install Python deps.
+# 2. Install uv (5-10× faster than pip), then install deps with it.
+if ! command -v uv >/dev/null 2>&1; then
+    echo
+    echo "==> installing uv"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
 echo
-echo "==> pip install"
+echo "==> uv pip install (system python)"
 # Pin transformers and peft to pre-torchao-strict versions. The pod's
 # preinstalled torch is older than 2.5, so anything pulling in torchao>=0.16
-# (which uses torch.int1) explodes at import. transformers 4.45 + peft 0.13
+# (which uses torch.int1) explodes at import. transformers <4.50 + peft <0.14
 # don't import torchao for our LoRA path, and bitsandbytes 4-bit still works.
-python -m pip install -q \
+uv pip install --system -q \
     'transformers>=4.43,<4.50' 'peft>=0.12,<0.14' \
     'accelerate>=0.30' 'datasets>=2.20' 'bitsandbytes>=0.43' \
     'numpy>=1.24' 'tqdm>=4.65' 'tokenizers>=0.19' \
