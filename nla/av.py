@@ -39,7 +39,12 @@ class AV(nn.Module):
         self.base = get_peft_model(base, cfg, adapter_name=adapter_name)
         self.adapter_name = adapter_name
         d_hidden = base.config.hidden_size
-        proj_dtype = next(base.parameters()).dtype
+        # bnb 4-bit packs weights as torch.uint8; skip integer-typed params
+        # so the projection ends up in a real floating-point dtype.
+        proj_dtype = next(
+            (p.dtype for p in base.parameters() if p.dtype.is_floating_point),
+            torch.float16,
+        )
         self.proj = nn.Linear(d_substrate, d_hidden, dtype=proj_dtype)
         nn.init.normal_(self.proj.weight, mean=0.0, std=0.02)
         nn.init.zeros_(self.proj.bias)

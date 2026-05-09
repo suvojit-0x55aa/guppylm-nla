@@ -220,6 +220,29 @@ def test_dataset_variant_short_and_long_keys(base_and_tok):
             assert expected_in_target in ar_decoded
 
 
+def test_proj_head_skip_uint8_params_from_bnb_base(base_and_tok):
+    """Regression: bnb 4-bit packs weights as torch.uint8. The first param
+    enumerated on a bnb-wrapped base is uint8, and `nn.Linear(dtype=uint8)`
+    produces garbage. AV.proj and AR.head must skip integer-typed params and
+    fall back to a real floating-point dtype."""
+    from nla.av import AV
+    from nla.ar import AR
+    base, tok, act_id = base_and_tok
+    # Inject a leading uint8 param (mimics bnb's Params4bit flat byte buffer).
+    base.register_buffer("_fake_packed_q_weight", torch.zeros(8, dtype=torch.uint8),
+                         persistent=False)
+    # nn.Module.parameters() doesn't yield buffers, so register as a param too.
+    if not hasattr(base, "_fake_packed_q_weight_p"):
+        base.register_parameter(
+            "_fake_packed_q_weight_p",
+            torch.nn.Parameter(torch.zeros(8, dtype=torch.uint8), requires_grad=False),
+        )
+    av = AV(base, act_id, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="av_uint8")
+    assert av.proj.weight.dtype.is_floating_point, f"proj got {av.proj.weight.dtype}"
+    ar = AR(av.base, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="ar_uint8")
+    assert ar.head.weight.dtype.is_floating_point, f"head got {ar.head.weight.dtype}"
+
+
 def test_checkpoint_roundtrip_preserves_proj_and_head(base_and_tok):
     """Regression: save_final/load_final must persist P_AV (proj) and Q_AR (head)
     weights, not just LoRA. Earlier filter used '.proj.' and '.head.' literal

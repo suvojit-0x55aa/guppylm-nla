@@ -44,7 +44,11 @@ class AR(nn.Module):
         self.adapter_name = adapter_name
 
         d_hidden = self.base.config.hidden_size
-        head_dtype = next(self.base.parameters()).dtype
+        # bnb 4-bit packs weights as torch.uint8; skip integer-typed params.
+        head_dtype = next(
+            (p.dtype for p in self.base.parameters() if p.dtype.is_floating_point),
+            torch.float16,
+        )
         self.head = nn.Linear(d_hidden, d_substrate, dtype=head_dtype)
         # Zero-init: target h_l2 is unit-norm; std=0.02 init produces ĥ with
         # norm ≈ √d_substrate · 0.02 · ||hidden|| ≈ 21, blowing MSE to ~440 per
