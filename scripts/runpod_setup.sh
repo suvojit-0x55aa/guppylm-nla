@@ -21,9 +21,13 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader
 # 2. Install Python deps.
 echo
 echo "==> pip install"
-python -m pip install -q -U \
-    'torchao>=0.16' 'transformers>=4.43' 'accelerate>=0.30' \
-    'peft>=0.12' 'datasets>=2.20' 'bitsandbytes>=0.43' \
+# Pin transformers and peft to pre-torchao-strict versions. The pod's
+# preinstalled torch is older than 2.5, so anything pulling in torchao>=0.16
+# (which uses torch.int1) explodes at import. transformers 4.45 + peft 0.13
+# don't import torchao for our LoRA path, and bitsandbytes 4-bit still works.
+python -m pip install -q \
+    'transformers>=4.43,<4.50' 'peft>=0.12,<0.14' \
+    'accelerate>=0.30' 'datasets>=2.20' 'bitsandbytes>=0.43' \
     'numpy>=1.24' 'tqdm>=4.65' 'tokenizers>=0.19' \
     'huggingface_hub>=0.20' 'pyarrow>=14' \
     'pytest>=7.4' 'pytest-asyncio>=0.21' 'openai>=1.40'
