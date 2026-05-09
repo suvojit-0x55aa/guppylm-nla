@@ -166,6 +166,34 @@ def load_final(module: nn.Module, save_dir: Path, device: torch.device | str = "
             "n_unexpected": len(unexpected)}
 
 
+def load_latest_checkpoint(
+    module: nn.Module, save_dir: Path, device: torch.device | str = "cuda",
+) -> dict | None:
+    """Load the highest-step checkpoint in save_dir for partial-progress resume.
+    Prefers final.pt; otherwise the highest step_<n>.pt. Returns metadata + step.
+    Optimizer state is NOT preserved (causes a ~50-step loss bump until AdamW
+    re-warms — cheaper than re-running 500 steps from scratch)."""
+    save_dir = Path(save_dir)
+    if not save_dir.exists():
+        return None
+    final_path = save_dir / "final.pt"
+    if final_path.exists():
+        return load_final(module, save_dir, device=device)
+    step_files = sorted(save_dir.glob("step_*.pt"),
+                        key=lambda p: int(p.stem.split("_")[1]))
+    if not step_files:
+        return None
+    latest = step_files[-1]
+    ckpt = torch.load(latest, map_location=device, weights_only=False)
+    state = ckpt.get("trainable_state", {})
+    missing, unexpected = module.load_state_dict(state, strict=False)
+    return {"step": ckpt.get("step", int(latest.stem.split("_")[1])),
+            "stop_reason": "resumed",
+            "history": [], "n_loaded_keys": len(state),
+            "n_unexpected": len(unexpected),
+            "from_path": str(latest)}
+
+
 # ── AV training ───────────────────────────────────────────────────────────────
 
 
@@ -207,6 +235,7 @@ def train_av(
     save_dir: str | Path = "checkpoints/phase3/av",
     device: torch.device | str = "cuda",
     log_every: int = 50,
+    start_step: int = 0,                                # resume cursor (weights restored externally)
 ) -> dict:
     save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(device)
@@ -216,10 +245,10 @@ def train_av(
     stopper = EarlyStopper(mode="ce", patience=patience, min_delta=min_delta, min_steps=min_steps)
     history = []
     t0 = time.time()
-    step = 0
+    step = start_step
     accum = 0
     train_iter = iter(train_loader)
-    progress = tqdm(total=max_steps, desc="AV")
+    progress = tqdm(total=max_steps, initial=step, desc="AV")
 
     stop_reason = "max_steps"
     while step < max_steps:
@@ -314,6 +343,7 @@ def train_ar(
     save_dir: str | Path = "checkpoints/phase3/ar",
     device: torch.device | str = "cuda",
     log_every: int = 50,
+    start_step: int = 0,                                # resume cursor (weights restored externally)
 ) -> dict:
     """Trains AR. If `fve_eval_fn(step)` is provided, FVE is computed at every
     eval and used as the early-stop signal; otherwise raw MSE is used."""
@@ -329,10 +359,10 @@ def train_ar(
     )
     history = []
     t0 = time.time()
-    step = 0
+    step = start_step
     accum = 0
     train_iter = iter(train_loader)
-    progress = tqdm(total=max_steps, desc="AR")
+    progress = tqdm(total=max_steps, initial=step, desc="AR")
 
     stop_reason = "max_steps"
     while step < max_steps:

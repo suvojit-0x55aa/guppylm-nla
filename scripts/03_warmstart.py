@@ -30,7 +30,7 @@ from nla.data_phase3 import (  # noqa: E402
     AVDataset, ARDataset, av_collate, ar_collate, load_phase3_inputs,
 )
 from nla.splits import make_or_load_split  # noqa: E402
-from nla.train_warmstart import load_final, save_final, train_av, train_ar  # noqa: E402
+from nla.train_warmstart import load_final, load_latest_checkpoint, save_final, train_av, train_ar  # noqa: E402
 from nla.fve import joint_fve, variance_of_targets  # noqa: E402
 
 
@@ -138,11 +138,13 @@ def run_variant(args, variant: str) -> dict:
     total_budget_sec = args.time_budget_min * 60.0
     av_budget_sec = total_budget_sec * 0.5
 
-    # Train AV (skip if a final.pt already exists in --ckpt-root).
+    # Train AV. load_latest_checkpoint preferentially loads final.pt (full skip)
+    # but falls back to the highest step_<n>.pt and resumes from that step.
     t0 = time.time()
     av_save = Path(args.ckpt_root) / f"av_{variant}"
-    loaded = load_final(av, av_save, device=device) if args.skip_if_trained else None
-    if loaded is not None:
+    loaded = load_latest_checkpoint(av, av_save, device=device) if args.skip_if_trained else None
+    if loaded is not None and loaded.get("stop_reason") != "resumed":
+        # final.pt — fully trained; skip
         print(f"\n[variant={variant}] AV already trained → loaded {av_save}/final.pt "
               f"(step={loaded['step']}, stop_reason={loaded['stop_reason']}, "
               f"keys={loaded['n_loaded_keys']})")
@@ -151,7 +153,11 @@ def run_variant(args, variant: str) -> dict:
                      "elapsed_sec": 0.0,
                      "history": loaded.get("history") or []}
     else:
-        print(f"\n[variant={variant}] training AV (budget {av_budget_sec/60:.0f} min)")
+        start_step = int(loaded["step"]) if (loaded and loaded.get("stop_reason") == "resumed") else 0
+        if start_step > 0:
+            print(f"\n[variant={variant}] resuming AV from {loaded['from_path']} "
+                  f"(step={start_step}, keys={loaded['n_loaded_keys']})")
+        print(f"[variant={variant}] training AV (budget {av_budget_sec/60:.0f} min, start_step={start_step})")
         av_result = train_av(
             av, av_train_loader, av_eval_loader,
             max_steps=args.max_steps, min_steps=args.min_steps,
@@ -161,6 +167,7 @@ def run_variant(args, variant: str) -> dict:
             warmup_steps=200, patience=args.patience, min_delta=args.min_delta,
             time_budget_sec=av_budget_sec,
             save_dir=av_save, device=device, log_every=50,
+            start_step=start_step,
         )
     av_elapsed = time.time() - t0
     print(f"AV: stop_reason={av_result['stop_reason']}, steps={av_result['final_step']}, "
@@ -183,11 +190,11 @@ def run_variant(args, variant: str) -> dict:
         av.train()
         return result["fve"]
 
-    # Train AR (skip if a final.pt already exists).
+    # Train AR. Same resume semantics as AV.
     t1 = time.time()
     ar_save = Path(args.ckpt_root) / f"ar_{variant}"
-    loaded_ar = load_final(ar, ar_save, device=device) if args.skip_if_trained else None
-    if loaded_ar is not None:
+    loaded_ar = load_latest_checkpoint(ar, ar_save, device=device) if args.skip_if_trained else None
+    if loaded_ar is not None and loaded_ar.get("stop_reason") != "resumed":
         print(f"\n[variant={variant}] AR already trained → loaded {ar_save}/final.pt "
               f"(step={loaded_ar['step']}, stop_reason={loaded_ar['stop_reason']}, "
               f"keys={loaded_ar['n_loaded_keys']})")
@@ -196,7 +203,11 @@ def run_variant(args, variant: str) -> dict:
                      "elapsed_sec": 0.0,
                      "history": loaded_ar.get("history") or []}
     else:
-        print(f"\n[variant={variant}] training AR (budget {ar_budget_sec/60:.0f} min)")
+        start_step_ar = int(loaded_ar["step"]) if (loaded_ar and loaded_ar.get("stop_reason") == "resumed") else 0
+        if start_step_ar > 0:
+            print(f"\n[variant={variant}] resuming AR from {loaded_ar['from_path']} "
+                  f"(step={start_step_ar}, keys={loaded_ar['n_loaded_keys']})")
+        print(f"[variant={variant}] training AR (budget {ar_budget_sec/60:.0f} min, start_step={start_step_ar})")
         ar_result = train_ar(
             ar, ar_train_loader, ar_eval_loader,
             fve_eval_fn=fve_at_step,
@@ -207,6 +218,7 @@ def run_variant(args, variant: str) -> dict:
             warmup_steps=200, patience=args.patience, min_delta=args.min_delta,
             time_budget_sec=ar_budget_sec,
             save_dir=ar_save, device=device, log_every=50,
+            start_step=start_step_ar,
         )
     ar_elapsed = time.time() - t1
     print(f"AR: stop_reason={ar_result['stop_reason']}, steps={ar_result['final_step']}, "

@@ -12,8 +12,8 @@ WORKSPACE="${WORKSPACE:-/workspace}"
 HF_HOME_DIR="${HF_HOME:-$WORKSPACE/hf_cache}"
 CKPT_ROOT="${CKPT_ROOT:-$WORKSPACE/ckpts/phase3}"
 OUT_ROOT="${OUT_ROOT:-$WORKSPACE/out}"
-MAX_STEPS="${MAX_STEPS:-20000}"
-TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-1440}"   # 24 h ≈ no cap
+MAX_STEPS="${MAX_STEPS:-10000}"            # plan-aligned step ceiling
+TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-360}"  # 6 h / variant (AV+AR) — convergence stopper usually fires earlier
 
 cd "$REPO_DIR"
 mkdir -p "$HF_HOME_DIR" "$CKPT_ROOT" "$OUT_ROOT"
