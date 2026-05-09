@@ -39,13 +39,10 @@ class AV(nn.Module):
         self.base = get_peft_model(base, cfg, adapter_name=adapter_name)
         self.adapter_name = adapter_name
         d_hidden = base.config.hidden_size
-        # bnb 4-bit packs weights as torch.uint8; skip integer-typed params
-        # so the projection ends up in a real floating-point dtype.
-        proj_dtype = next(
-            (p.dtype for p in base.parameters() if p.dtype.is_floating_point),
-            torch.float16,
-        )
-        self.proj = nn.Linear(d_substrate, d_hidden, dtype=proj_dtype)
+        # Trainable proj must be fp32: AdamW state in fp16 underflows
+        # (exp_avg_sq ≈ 1e-9 < fp16 min subnormal 6e-8 → 0; eps=1e-8 → 0; denom=0;
+        # update = m/0 = Inf). Autocast handles the bf16 cast at forward time.
+        self.proj = nn.Linear(d_substrate, d_hidden, dtype=torch.float32)
         nn.init.normal_(self.proj.weight, mean=0.0, std=0.02)
         nn.init.zeros_(self.proj.bias)
         self.act_id = int(act_token_id)

@@ -30,9 +30,9 @@ def auto_batch_sizes(
     train_ceiling: int = 16,
     eval_floor: int = 2,
     eval_ceiling: int = 32,
-    reserved_gb: float = 3.0,
-    train_per_unit_mb: float = 700.0,
-    eval_per_unit_mb: float = 200.0,
+    reserved_gb: float = 5.0,
+    train_per_unit_mb: float = 1100.0,
+    eval_per_unit_mb: float = 250.0,
 ) -> tuple[int, int, dict]:
     """Heuristic batch sizes from current free CUDA memory.
 

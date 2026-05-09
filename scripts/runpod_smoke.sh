@@ -14,7 +14,8 @@ echo "==> smoke: variant=text, max-steps=50, time-budget=10min, eval=16 rows"
 echo "==> ckpts: $WORKSPACE/ckpts/phase3_smoke"
 echo "==> out:   $WORKSPACE/out/smoke"
 
-HF_HOME="$HF_HOME_DIR" python scripts/03_warmstart.py \
+HF_HOME="$HF_HOME_DIR" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+    python scripts/03_warmstart.py \
     --variant text \
     --max-steps 50 --min-steps 0 --time-budget-min 10 \
     --batch 0 --eval-batch 0 \

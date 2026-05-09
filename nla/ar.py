@@ -44,12 +44,10 @@ class AR(nn.Module):
         self.adapter_name = adapter_name
 
         d_hidden = self.base.config.hidden_size
-        # bnb 4-bit packs weights as torch.uint8; skip integer-typed params.
-        head_dtype = next(
-            (p.dtype for p in self.base.parameters() if p.dtype.is_floating_point),
-            torch.float16,
-        )
-        self.head = nn.Linear(d_hidden, d_substrate, dtype=head_dtype)
+        # Trainable head must be fp32: AdamW state in fp16 underflows
+        # (exp_avg_sq ≈ 1e-9 < fp16 min subnormal 6e-8 → 0; eps=1e-8 → 0; denom=0;
+        # update = m/0 = Inf). Autocast handles the bf16 cast at forward time.
+        self.head = nn.Linear(d_hidden, d_substrate, dtype=torch.float32)
         # Zero-init: target h_l2 is unit-norm; std=0.02 init produces ĥ with
         # norm ≈ √d_substrate · 0.02 · ||hidden|| ≈ 21, blowing MSE to ~440 per
         # row before any learning. Zero init makes initial FVE ≈ 0 so training
@@ -77,7 +75,10 @@ class AR(nn.Module):
             last_token = last_hidden.gather(dim=1, index=idx).squeeze(1)
         else:
             last_token = last_hidden[:, -1, :]
-        return self.head(last_token).float()                            # MSE in fp32
+        # Cast to head's dtype: head is fp32 (AdamW state stability) but
+        # base's last_hidden may be bf16/fp16. Without autocast (eval path),
+        # F.linear errors on dtype mismatch — explicit cast handles both paths.
+        return self.head(last_token.to(self.head.weight.dtype)).float()  # MSE in fp32
 
     def trainable_parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
