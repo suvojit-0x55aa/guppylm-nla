@@ -22,7 +22,7 @@ End-to-end recipe to run AV+AR SFT warm-start on RunPod (recommended A5000 24GB 
    cd /workspace
    git clone https://github.com/suvojit-0x55aa/guppylm-nla.git
    cd guppylm-nla
-   bash runpod/setup.sh
+   bash scripts/runpod_setup.sh
    ```
    Setup clones the repo, installs Python deps, untars the bundle into the right places, and prints a one-line GPU check.
 
@@ -32,7 +32,7 @@ Verifies the pipeline end-to-end on real GPU before committing to the long run.
 
 ```bash
 cd /workspace/guppylm-nla
-bash runpod/smoke.sh
+bash scripts/runpod_smoke.sh
 ```
 
 Expects: AV trains 30+ steps, AR trains 30+ steps, FVE eval finishes, final FVE prints. Smoke results in `/workspace/out/smoke/`.
@@ -43,15 +43,14 @@ Once smoke passes, run both variants. Stops on convergence; effectively no time 
 
 ```bash
 cd /workspace/guppylm-nla
-bash runpod/full.sh
+bash scripts/runpod_full.sh
 ```
 
-Trains AV+AR on `summary_text`, then on `summary_lens`, with checkpoints written to `/workspace/ckpts/phase3/{av,ar}_{text,lens}/final.pt` after each phase. Re-running `runpod/full.sh` will skip already-trained variants (looks for `final.pt`).
+Trains AV+AR on `summary_text`, then on `summary_lens`, with checkpoints written to `/workspace/ckpts/phase3/{av,ar}_{text,lens}/final.pt` after each phase. Re-running `scripts/runpod_full.sh` will skip already-trained variants (looks for `final.pt`).
 
 Results in `/workspace/out/`:
 - `history_text.json`, `history_lens.json` — per-variant FVE curves and final numbers
 - `MANIFEST_phase3.json` — provenance + decision banner
-- `fve_curves.png` (if you run the plot cell — see `runpod/plot.sh`)
 
 ## Pull results back to your laptop
 
