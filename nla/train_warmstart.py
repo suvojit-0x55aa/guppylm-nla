@@ -133,8 +133,9 @@ def _trainable_state(module: nn.Module) -> dict:
 def _save_checkpoint(module: nn.Module, save_dir: Path, step: int, tag: str = "ar_or_av",
                      keep_last: int = 3):
     """Save step_<n>.pt; rotate to keep only the last `keep_last` step files.
-    final.pt is never rotated. With each ckpt at ~1.3 GB on the resized-embedding
-    base, keeping all of a 6000-step run would need ~33 GB; we cap at ~4 GB."""
+    final.pt + best.pt are never rotated (different filename pattern).
+    With each ckpt at ~1.3 GB on the resized-embedding base, keeping all of a
+    6000-step run would need ~33 GB; we cap at ~4 GB."""
     save_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"step": step, "trainable_state": _trainable_state(module)},
                save_dir / f"step_{step}.pt")
@@ -145,6 +146,19 @@ def _save_checkpoint(module: nn.Module, save_dir: Path, step: int, tag: str = "a
             old.unlink()
         except OSError:
             pass
+
+
+def _save_best(module: nn.Module, save_dir: Path, step: int, metric_name: str,
+               metric_value: float):
+    """Persist the best-so-far snapshot to best.pt. Filename does not match
+    step_*.pt so the rotation in _save_checkpoint never touches it."""
+    save_dir = Path(save_dir); save_dir.mkdir(parents=True, exist_ok=True)
+    torch.save({
+        "step": step,
+        "metric_name": metric_name,
+        "metric_value": float(metric_value),
+        "trainable_state": _trainable_state(module),
+    }, save_dir / "best.pt")
 
 
 def save_final(module: nn.Module, save_dir: Path, step: int, *, history: dict | None = None,
@@ -265,6 +279,7 @@ def train_av(
     last_gn = float("nan")
     last_lr = float("nan")
     last_eval_ce = float("nan")
+    best_eval_ce = float("inf")
 
     stop_reason = "max_steps"
     while step < max_steps:
@@ -312,6 +327,9 @@ def train_av(
                 stopper.update(ce, step)
                 history.append({"step": step, "eval_ce": ce, "elapsed_sec": time.time() - t0})
                 last_eval_ce = ce
+                if ce < best_eval_ce:
+                    best_eval_ce = ce
+                    _save_best(av, save_dir, step, "eval_ce", ce)
                 if stopper.should_stop(step):
                     stop_reason = "converged"
                     break
@@ -396,6 +414,8 @@ def train_ar(
     last_lr = float("nan")
     last_eval_mse = float("nan")
     last_fve = float("nan")
+    best_fve = float("-inf")
+    best_mse = float("inf")
 
     stop_reason = "max_steps"
     while step < max_steps:
@@ -441,11 +461,18 @@ def train_ar(
                 mse = _mse_eval_ar(ar, eval_loader, device)
                 ev: dict = {"step": step, "eval_mse": mse, "elapsed_sec": time.time() - t0}
                 last_eval_mse = mse
+                if mse < best_mse:
+                    best_mse = mse
+                    if not use_fve:
+                        _save_best(ar, save_dir, step, "eval_mse", mse)
                 if use_fve:
                     fve = fve_eval_fn(step)
                     ev["fve"] = fve
                     last_fve = fve
                     stopper.update(fve, step)
+                    if fve > best_fve:
+                        best_fve = fve
+                        _save_best(ar, save_dir, step, "fve", fve)
                 else:
                     stopper.update(mse, step)
                 history.append(ev)
