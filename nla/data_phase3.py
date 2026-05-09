@@ -63,13 +63,22 @@ def load_phase3_inputs(
     return corpus, summaries, h
 
 
-def _build_av_prompt_ids(tokenizer, act_token: str = "<ACT>") -> list[int]:
-    """Tokenize the chat-template prompt for AV (system + user=<ACT>) with the
-    assistant generation tag appended. Returns prompt-only ids — caller appends
-    the target tokens."""
+N_ACT_TOKENS = 8                                                # injection-position count
+
+
+def _build_av_prompt_ids(tokenizer, act_token: str = "<ACT>",
+                          n_act: int = N_ACT_TOKENS) -> list[int]:
+    """Tokenize the chat-template prompt for AV (system + user=<ACT>×N) with
+    the assistant generation tag appended. Returns prompt-only ids — caller
+    appends the target tokens.
+
+    Multiple <ACT> tokens carry the SAME projected activation vector (via
+    AV._inject's mask-broadcast). The repetition gives the activation signal
+    more 'voice' through Qwen's self-attention stack — a single embedding
+    position is too easy for the deep model to ignore."""
     messages = [
         {"role": "system", "content": SYSTEM_AV},
-        {"role": "user", "content": act_token},
+        {"role": "user", "content": act_token * n_act},
     ]
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     return tokenizer(text, add_special_tokens=False)["input_ids"]
