@@ -22,3 +22,4 @@ data/corpus_smoke.jsonl
 data/activations_smoke.npz
 data/summaries_smoke.jsonl
 guppylm-nla-bundle.tar.gz
+pod-sync/
