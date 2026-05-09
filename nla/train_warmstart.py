@@ -260,6 +260,11 @@ def train_av(
     accum = 0
     train_iter = iter(train_loader)
     progress = tqdm(total=max_steps, initial=step, desc="AV")
+    # Live stats — exponential-moving average of loss, last grad-norm/LR/eval, GPU mem.
+    loss_ema = None
+    last_gn = float("nan")
+    last_lr = float("nan")
+    last_eval_ce = float("nan")
 
     stop_reason = "max_steps"
     while step < max_steps:
@@ -280,13 +285,24 @@ def train_av(
         loss.backward()
         accum += 1
         if accum >= grad_accum:
-            torch.nn.utils.clip_grad_norm_([p for p in av.parameters() if p.requires_grad], grad_clip)
-            _set_lrs(opt, max_steps=max_steps, step=step, lr_lora=lr_lora, lr_proj=lr_proj,
-                     warmup_steps=warmup_steps)
+            gn = torch.nn.utils.clip_grad_norm_(
+                [p for p in av.parameters() if p.requires_grad], grad_clip)
+            last_gn = float(gn) if torch.is_tensor(gn) else float(gn)
+            lora_lr, proj_lr = _set_lrs(opt, max_steps=max_steps, step=step,
+                                        lr_lora=lr_lora, lr_proj=lr_proj,
+                                        warmup_steps=warmup_steps)
+            last_lr = lora_lr
             opt.step(); opt.zero_grad(set_to_none=True)
             accum = 0
             step += 1
             progress.update(1)
+            train_loss_full = float(loss.item()) * grad_accum
+            loss_ema = train_loss_full if loss_ema is None else 0.98 * loss_ema + 0.02 * train_loss_full
+            gpu_gb = (torch.cuda.memory_allocated() / 1024 ** 3) if device.type == "cuda" else 0.0
+            progress.set_postfix(
+                loss=f"{loss_ema:.3f}", gn=f"{last_gn:.2f}", lr=f"{last_lr:.1e}",
+                eval=f"{last_eval_ce:.3f}", gpu=f"{gpu_gb:.1f}G",
+            )
 
             if step % log_every == 0:
                 history.append({"step": step, "train_loss": float(loss.item() * grad_accum),
@@ -295,7 +311,7 @@ def train_av(
                 ce = _ce_eval_av(av, eval_loader, device)
                 stopper.update(ce, step)
                 history.append({"step": step, "eval_ce": ce, "elapsed_sec": time.time() - t0})
-                progress.set_postfix(eval_ce=f"{ce:.4f}")
+                last_eval_ce = ce
                 if stopper.should_stop(step):
                     stop_reason = "converged"
                     break
@@ -374,6 +390,12 @@ def train_ar(
     accum = 0
     train_iter = iter(train_loader)
     progress = tqdm(total=max_steps, initial=step, desc="AR")
+    # Live stats — EMA loss, last grad-norm/LR/eval-mse/fve, GPU mem.
+    loss_ema = None
+    last_gn = float("nan")
+    last_lr = float("nan")
+    last_eval_mse = float("nan")
+    last_fve = float("nan")
 
     stop_reason = "max_steps"
     while step < max_steps:
@@ -393,13 +415,24 @@ def train_ar(
         loss.backward()
         accum += 1
         if accum >= grad_accum:
-            torch.nn.utils.clip_grad_norm_([p for p in ar.parameters() if p.requires_grad], grad_clip)
-            _set_lrs(opt, max_steps=max_steps, step=step, lr_lora=lr_lora, lr_proj=lr_proj,
-                     warmup_steps=warmup_steps)
+            gn = torch.nn.utils.clip_grad_norm_(
+                [p for p in ar.parameters() if p.requires_grad], grad_clip)
+            last_gn = float(gn) if torch.is_tensor(gn) else float(gn)
+            lora_lr, proj_lr = _set_lrs(opt, max_steps=max_steps, step=step,
+                                        lr_lora=lr_lora, lr_proj=lr_proj,
+                                        warmup_steps=warmup_steps)
+            last_lr = lora_lr
             opt.step(); opt.zero_grad(set_to_none=True)
             accum = 0
             step += 1
             progress.update(1)
+            train_mse_full = float(loss.item()) * grad_accum
+            loss_ema = train_mse_full if loss_ema is None else 0.98 * loss_ema + 0.02 * train_mse_full
+            gpu_gb = (torch.cuda.memory_allocated() / 1024 ** 3) if device.type == "cuda" else 0.0
+            progress.set_postfix(
+                mse=f"{loss_ema:.3f}", gn=f"{last_gn:.2f}", lr=f"{last_lr:.1e}",
+                emse=f"{last_eval_mse:.3f}", fve=f"{last_fve:.3f}", gpu=f"{gpu_gb:.1f}G",
+            )
 
             if step % log_every == 0:
                 history.append({"step": step, "train_mse": float(loss.item() * grad_accum),
@@ -407,14 +440,14 @@ def train_ar(
             if step % eval_every == 0:
                 mse = _mse_eval_ar(ar, eval_loader, device)
                 ev: dict = {"step": step, "eval_mse": mse, "elapsed_sec": time.time() - t0}
+                last_eval_mse = mse
                 if use_fve:
                     fve = fve_eval_fn(step)
                     ev["fve"] = fve
+                    last_fve = fve
                     stopper.update(fve, step)
-                    progress.set_postfix(mse=f"{mse:.4f}", fve=f"{fve:.3f}")
                 else:
                     stopper.update(mse, step)
-                    progress.set_postfix(mse=f"{mse:.4f}")
                 history.append(ev)
                 if stopper.should_stop(step):
                     stop_reason = "converged"
