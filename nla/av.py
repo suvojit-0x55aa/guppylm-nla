@@ -48,7 +48,10 @@ class AV(nn.Module):
 
     def _inject(self, input_ids: torch.Tensor, h_l: torch.Tensor) -> torch.Tensor:
         emb = self.base.get_input_embeddings()(input_ids)              # (B, T, d_hidden)
-        inj = self.proj(h_l).unsqueeze(1).to(emb.dtype)                # (B, 1, d_hidden)
+        # h_l comes from the dataloader as fp32; P_AV weights inherit the base
+        # dtype (bf16 on Qwen 3B / T4). Cast input to weight dtype before linear.
+        h_cast = h_l.to(self.proj.weight.dtype)
+        inj = self.proj(h_cast).unsqueeze(1).to(emb.dtype)             # (B, 1, d_hidden)
         mask = (input_ids == self.act_id).unsqueeze(-1)                 # (B, T, 1)
         return torch.where(mask, inj.expand_as(emb), emb)
 

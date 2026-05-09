@@ -72,6 +72,23 @@ def test_av_inject_localized(base_and_tok):
         assert torch.allclose(emb_after[b, t_act].float(), inj[b].float(), atol=1e-3)
 
 
+def test_av_inject_bf16_base_fp32_input(base_and_tok):
+    """Regression: on T4/Qwen the base loads in bf16; h_l from the dataloader is fp32.
+    AV must cast h_l to the proj's weight dtype, not let F.linear barf."""
+    from nla.av import AV
+    base, tok, act_id = base_and_tok
+    base_bf = base.to(torch.bfloat16)
+    av = AV(base_bf, act_id, d_substrate=384, lora_r=4, lora_alpha=8, adapter_name="av_bf")
+    assert av.proj.weight.dtype == torch.bfloat16
+    B, T = 1, 4
+    input_ids = torch.tensor([[act_id, 1, 2, 3]], dtype=torch.long)
+    h = torch.randn(B, 384, dtype=torch.float32)        # mimic dataloader fp32 input
+    emb = av._inject(input_ids, h)
+    assert torch.isfinite(emb).all()
+    assert emb.dtype == torch.bfloat16
+    base.to(torch.float32)                               # reset for downstream tests
+
+
 def test_av_forward_shape(base_and_tok):
     from nla.av import AV
     base, tok, act_id = base_and_tok
