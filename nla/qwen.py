@@ -16,6 +16,14 @@ DEFAULT_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 ACT_TOKEN = "<ACT>"
 
 
+def best_amp_dtype() -> torch.dtype:
+    """bf16 on Ampere+ (no GradScaler needed); fp16 on older GPUs."""
+    import torch
+    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
 def auto_batch_sizes(
     *,
     train_floor: int = 1,
@@ -78,7 +86,7 @@ def load_qwen(
     *,
     use_4bit: bool = True,
     device_map: str | dict | None = "auto",
-    dtype: torch.dtype = torch.float16,
+    dtype: torch.dtype | None = None,
 ):
     """Load (base, tokenizer, act_token_id).
 
@@ -89,6 +97,8 @@ def load_qwen(
         device_map: "auto" by default; pass {"": "mps"} or "cpu" for non-CUDA.
         dtype: compute dtype. fp16 on T4 / MPS. bf16 if user prefers on H100.
     """
+    if dtype is None:
+        dtype = best_amp_dtype()
     quantization_config = None
     if use_4bit:
         from transformers import BitsAndBytesConfig

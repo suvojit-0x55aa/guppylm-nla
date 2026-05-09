@@ -26,6 +26,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from .qwen import best_amp_dtype
+
 
 # ── Early stopping ────────────────────────────────────────────────────────────
 
@@ -232,7 +234,7 @@ def train_av(
         labels = batch["labels"].to(device)
         h = batch["h"].to(device)
 
-        with torch.amp.autocast(device_type=device.type, dtype=torch.float16):
+        with torch.amp.autocast(device_type=device.type, dtype=best_amp_dtype()):
             out = av(input_ids=input_ids, attention_mask=attn, h_l=h, labels=labels)
             loss = out.loss / grad_accum
         loss.backward()
@@ -344,7 +346,7 @@ def train_ar(
         attn = batch["attention_mask"].to(device)
         h = batch["h"].to(device)
 
-        with torch.amp.autocast(device_type=device.type, dtype=torch.float16):
+        with torch.amp.autocast(device_type=device.type, dtype=best_amp_dtype()):
             h_hat = ar(input_ids=input_ids, attention_mask=attn)
             loss = ((h - h_hat) ** 2).sum(dim=-1).mean() / grad_accum
         loss.backward()
